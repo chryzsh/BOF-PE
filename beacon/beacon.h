@@ -183,6 +183,23 @@ BEACON_IMPEX size_t BeaconDataStoreMaxEntries();
 /* Beacon User Data functions */
 BEACON_IMPEX char * BeaconGetCustomUserData();
 
+/* Async BOF API
+ *    Outflank async BOF spec (https://www.outflank.nl/blog/2025/07/16/async-bofs-wake-me-up-before-you-go-go/).
+ *    The C2 runs the async BOF entry point on its own thread.
+ *
+ *    BeaconWakeup          - ask the implant to wake from sleep and send queued
+ *                            output now instead of at the next check-in.
+ *    BeaconGetStopJobEvent - event handle the C2 signals when the operator stops
+ *                            the job. The BOF must return soon after it is signaled.
+ *                            NULL means the C2 does not run this BOF as async.
+ *
+ *    A C2 without these APIs may leave the import unresolved, so check the
+ *    address before calling it. Read it through a volatile local, GCC drops a
+ *    plain `BeaconGetStopJobEvent != nullptr` check (see README).
+ */
+BEACON_IMPEX void   BeaconWakeup();
+BEACON_IMPEX HANDLE BeaconGetStopJobEvent();
+
 typedef void (*BeaconEntryPtr)(const char* data, int len);
 
 BEACON_IMPEX int BeaconInvokeStandalone(int argc, const char* argv[], const char* bof_args_def, BeaconEntryPtr entry);
