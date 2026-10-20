@@ -184,15 +184,60 @@ extern "C" BEACON_IMPEX void BeaconFormatInt(formatp* format, int value) {
 
 /* Main output functions */
 
+/* Async BOFs can print from worker threads, so serialise console output */
+static SRWLOCK output_lock = SRWLOCK_INIT;
+
 extern "C" BEACON_IMPEX void BeaconPrintf(int type, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
+    AcquireSRWLockExclusive(&output_lock);
     vprintf(fmt, args);
+    fflush(stdout);
+    ReleaseSRWLockExclusive(&output_lock);
     va_end(args);
 }
 
 extern "C" BEACON_IMPEX void BeaconOutput(int type, char* data, int len) {
+    AcquireSRWLockExclusive(&output_lock);
     fwrite(data,len,1,stdout);
+    fflush(stdout);
+    ReleaseSRWLockExclusive(&output_lock);
+}
+
+/* Async BOF functions
+ *
+ * Standalone emulation: the stop job event is a manual-reset event that
+ * Ctrl+C or Ctrl+Break signals, and BeaconWakeup prints a marker so you can
+ * see when the BOF would have woken the implant. */
+
+static HANDLE stop_job_event = NULL;
+
+static BOOL WINAPI stop_job_ctrl_handler(DWORD ctrl_type) {
+    if (ctrl_type == CTRL_C_EVENT || ctrl_type == CTRL_BREAK_EVENT) {
+        SetEvent(stop_job_event);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static BOOL CALLBACK create_stop_job_event(PINIT_ONCE, PVOID, PVOID*) {
+    stop_job_event = CreateEventA(NULL, TRUE, FALSE, NULL);
+    if (stop_job_event != NULL)
+        SetConsoleCtrlHandler(stop_job_ctrl_handler, TRUE);
+    return TRUE;
+}
+
+extern "C" BEACON_IMPEX HANDLE BeaconGetStopJobEvent() {
+    static INIT_ONCE once = INIT_ONCE_STATIC_INIT;
+    InitOnceExecuteOnce(&once, create_stop_job_event, NULL, NULL);
+    return stop_job_event;
+}
+
+extern "C" BEACON_IMPEX void BeaconWakeup() {
+    AcquireSRWLockExclusive(&output_lock);
+    fputs("[wakeup]\n", stdout);
+    fflush(stdout);
+    ReleaseSRWLockExclusive(&output_lock);
 }
 
 /* Token Functions */

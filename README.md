@@ -218,6 +218,32 @@ Hello from Beacon C++ PE CCob, the time is now 2025-02-20 11:36:59.2342945 UTC
 Hello from Beacon C++ exception handler
 ```
 
+## Async BOF-PE
+
+`beacon.h` includes the two functions from the [Outflank async BOF spec](https://www.outflank.nl/blog/2025/07/16/async-bofs-wake-me-up-before-you-go-go/). A C2 that supports async BOFs runs the entry point on its own thread.
+
+* `BeaconGetStopJobEvent()` returns an event that the C2 signals when the operator stops the job. Return soon after it is signaled.
+* `BeaconWakeup()` asks the implant to wake up and send queued output now, instead of at the next check-in.
+
+```
+// Read through a volatile, GCC removes a plain != nullptr check on a function address
+decltype(&BeaconGetStopJobEvent) volatile getStopJobEvent = &BeaconGetStopJobEvent;
+HANDLE stop = getStopJobEvent != nullptr ? getStopJobEvent() : nullptr;
+if (stop == nullptr) {
+    BeaconPrintf(CALLBACK_ERROR, "This BOF needs async support\n");
+    return;
+}
+
+while (WaitForSingleObject(stop, 2000) == WAIT_TIMEOUT) {
+    if (something_happened()) {
+        BeaconPrintf(CALLBACK_OUTPUT, "...\n");
+        BeaconWakeup();
+    }
+}
+```
+
+Check the function pointer first, because a C2 or loader without the async API can leave the import unresolved. GCC assumes a function address is never NULL and drops `if (BeaconGetStopJobEvent != nullptr)`, so read the address through a `volatile` local as above. When the BOF-PE runs standalone, `beacon.dll` emulates both functions: Ctrl+C or Ctrl+Break signals the stop event, and `BeaconWakeup` prints `[wakeup]`. Output from worker threads is serialized.
+
 ## Thanks
 
 The POC loader makes use of a modified version of [formatPE](https://github.com/HoShiMin/formatPE) for a zero copy PE parser for C++.  The modifications are generally around support for compiling against the GCC compiler 
