@@ -246,7 +246,7 @@ Hello from Beacon C++ exception handler
 
 ## Async BOF-PE
 
-An async BOF runs on its own thread inside the implant and keeps running while the implant sleeps. Outflank describes the design in [Async BOFs: Wake Me Up Before You Go Go](https://www.outflank.nl/blog/2025/07/16/async-bofs-wake-me-up-before-you-go-go/). `beacon.h` declares the two functions from that spec, and the standalone `beacon.dll` implements them, so a BOF-PE can also be an async BOF.
+An async BOF runs on its own thread inside the implant and keeps running while the implant sleeps. Outflank describes the design in [Async BOFs: Wake Me Up Before You Go Go](https://www.outflank.nl/blog/2025/07/16/async-bofs-wake-me-up-before-you-go-go/). `beacon.h` declares the two functions from that spec, and the standalone `beacon.dll` implements them, so a BOF-PE can also be an async BOF. For AI-assisted development, see [Developing async BOF-PE with AI](#developing-async-bof-pe-with-ai).
 
 ### Async API
 
@@ -345,6 +345,12 @@ loader.exe procwatch.exe i 1000
 2. Add the folder with `add_subdirectory()` in the root `CMakeLists.txt`, followed by `install_bof_pe(<target>)` and an `install(FILES ...)` line for the `.s1.py` script.
 3. Keep `BEACON_INIT` as the first statement in `go`, and `BEACON_MAIN(fmt, go)` at the end of the file.
 4. Get the stop event through the `volatile` guard, wait on it in the main loop, and return when it is signaled.
+
+## Developing async BOF-PE with AI
+
+The [`async-bof`](https://github.com/chryzsh/claude-skills/tree/main/async-bof) Claude Code skill covers the async spec, the thread and lifecycle rules, the GCC `volatile` guard, the MinGW exit crash, C2 support, and testing. It works with the [`bof-pe-development`](https://github.com/chryzsh/claude-skills/tree/main/bof-pe-development) skill for BOF-PE basics and the [`bof-development`](https://github.com/chryzsh/claude-skills/tree/main/bof-development) skill for plain COFF BOFs.
+
+To install the skills, clone [chryzsh/claude-skills](https://github.com/chryzsh/claude-skills) and run `install.sh`, or copy the skill folders into `~/.claude/skills/`. Then describe the BOF-PE you want, for example "write an async BOF-PE that reports when a new process starts", and Claude Code loads the skill.
 
 ## Thanks
 
