@@ -108,7 +108,7 @@ I know which I prefer, but you do you. Either way, I hope the design is flexible
 #include <beacon.h>
 #include <string>
 #include <format>
-#include <exception>
+#include <stdexcept>
 #include <chrono>
 
 // The cpp-pe is in my option the best part to come out of the BOF PE design.
@@ -123,7 +123,7 @@ I know which I prefer, but you do you. Either way, I hope the design is flexible
 // std::string, std::chrono and exceptions. If we just make use of std::exception alone, it compiles to 80KB 
 
 void throw_message(const char* message) {
-    throw std::exception(message);
+    throw std::runtime_error(message);
 }
 
 void print_message(const char* arg) {
@@ -180,7 +180,33 @@ cd ..
 
 A Linux Docker image has been created to leverage Clang.  Check out the `.github/workflow` folder for examples on how to cross compile for Windows using Clang targeting msvc runtime.
 
-Once compilation has finished, all binaries should be present in the dist folder.
+### MinGW
+
+The `cmake/` folder holds toolchain files for cross compiling on Linux with MinGW-w64 (`x86_64-w64-mingw32-g++` and `i686-w64-mingw32-g++`).
+
+```bash
+cmake -S . -B build-x64 -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-x64.cmake -DCMAKE_BUILD_TYPE=Release
+cmake --build build-x64
+cmake --install build-x64 --prefix dist
+
+cmake -S . -B build-x86 -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-x86.cmake -DCMAKE_BUILD_TYPE=Release
+cmake --build build-x86
+cmake --install build-x86 --prefix dist
+```
+
+### Output layout
+
+Once compilation has finished, all binaries should be present in the dist folder. The x64 and x86 builds can share one install prefix.
+
+```
+dist/
+├── x64/  beacon.dll, loader.exe, tiny-pe.exe, c-pe.exe, cpp-pe.exe, procwatch.exe, fake-windows-popup-async.exe
+├── x86/  beacon.dll, loader.exe, tiny-pe.exe, c-pe.exe, cpp-pe.exe, procwatch.exe
+├── pe/   <name>.x64.o and <name>.x86.o for each BOF-PE
+└── ost/  procwatch.s1.py, fake-windows-popup-async.s1.py
+```
+
+The files in `pe/` are the same PE as the `.exe` files. OC2 looks up a BOF as `<name>.<arch>.o`, so the install step copies each BOF-PE under that name. The `.s1.py` scripts in `ost/` look for their BOF-PE in `../pe`.
 
 ### Prebuilt
 
@@ -220,29 +246,116 @@ Hello from Beacon C++ exception handler
 
 ## Async BOF-PE
 
-`beacon.h` includes the two functions from the [Outflank async BOF spec](https://www.outflank.nl/blog/2025/07/16/async-bofs-wake-me-up-before-you-go-go/). A C2 that supports async BOFs runs the entry point on its own thread.
+An async BOF runs on its own thread inside the implant and keeps running while the implant sleeps. Outflank describes the design in [Async BOFs: Wake Me Up Before You Go Go](https://www.outflank.nl/blog/2025/07/16/async-bofs-wake-me-up-before-you-go-go/). `beacon.h` declares the two functions from that spec, and the standalone `beacon.dll` implements them, so a BOF-PE can also be an async BOF.
 
-* `BeaconGetStopJobEvent()` returns an event that the C2 signals when the operator stops the job. Return soon after it is signaled.
-* `BeaconWakeup()` asks the implant to wake up and send queued output now, instead of at the next check-in.
+### Async API
 
-```
-// Read through a volatile, GCC removes a plain != nullptr check on a function address
-decltype(&BeaconGetStopJobEvent) volatile getStopJobEvent = &BeaconGetStopJobEvent;
-HANDLE stop = getStopJobEvent != nullptr ? getStopJobEvent() : nullptr;
-if (stop == nullptr) {
-    BeaconPrintf(CALLBACK_ERROR, "This BOF needs async support\n");
-    return;
+| Function | Description |
+| -------- | ----------- |
+| `HANDLE BeaconGetStopJobEvent()` | Returns an event that the C2 signals when the operator stops the job. The BOF must return soon after the event is signaled. |
+| `void BeaconWakeup()` | Asks the implant to wake from sleep and send queued output now, instead of at the next check-in. |
+
+### Thread model
+
+The C2 calls the BOF entry point on a new thread and returns control to the implant. The BOF does its work in a loop, waits on the stop event between iterations, and returns from `go` when the event is signaled. The C2 owns the stop event, so never close the handle. Call `BeaconWakeup` only when there is output to send. Each call wakes the implant and causes a check-in, so calling it on every loop iteration defeats the purpose of sleeping.
+
+The thread is created by the C2, not by the CRT or the Windows loader. It has not joined a COM apartment, and it runs next to the implant's own threads and other BOFs. Avoid shared global state. An uncaught C++ exception on this thread ends the implant process, so wrap the work in `try`/`catch`.
+
+### Detecting an unresolved import
+
+A C2 or loader without the async API can leave the `BeaconGetStopJobEvent` and `BeaconWakeup` imports unresolved (NULL), and calling them then crashes the implant. GCC assumes that the address of a `dllimport` function is never NULL, so it removes a plain `if (BeaconGetStopJobEvent != nullptr)` check. Read the address through a `volatile` local instead. Guard `BeaconWakeup` the same way when it can run on an error path.
+
+```c
+static HANDLE get_stop_job_event() {
+    decltype(&BeaconGetStopJobEvent) volatile fn = &BeaconGetStopJobEvent;
+    return fn != nullptr ? fn() : nullptr;
 }
 
-while (WaitForSingleObject(stop, 2000) == WAIT_TIMEOUT) {
-    if (something_happened()) {
-        BeaconPrintf(CALLBACK_OUTPUT, "...\n");
-        BeaconWakeup();
+static void wakeup() {
+    decltype(&BeaconWakeup) volatile fn = &BeaconWakeup;
+    if (fn != nullptr)
+        fn();
+}
+
+extern "C" __declspec(dllexport) void go(const char* data, int len) {
+    BEACON_INIT;
+
+    HANDLE stop = get_stop_job_event();
+    if (stop == nullptr) {
+        BeaconPrintf(CALLBACK_ERROR, "This BOF must run as an async BOF\n");
+        return;
+    }
+
+    try {
+        while (WaitForSingleObject(stop, 2000) == WAIT_TIMEOUT) {
+            if (something_happened()) {
+                BeaconPrintf(CALLBACK_OUTPUT, "...\n");
+                wakeup();
+            }
+        }
+    }
+    catch (const std::exception& ex) {
+        BeaconPrintf(CALLBACK_ERROR, "%s\n", ex.what());
     }
 }
 ```
 
-Check the function pointer first, because a C2 or loader without the async API can leave the import unresolved. GCC assumes a function address is never NULL and drops `if (BeaconGetStopJobEvent != nullptr)`, so read the address through a `volatile` local as above. When the BOF-PE runs standalone, `beacon.dll` emulates both functions: Ctrl+C or Ctrl+Break signals the stop event, and `BeaconWakeup` prints `[wakeup]`. Output from worker threads is serialized.
+### Static destructors and process exit with MinGW
+
+With GCC, `BEACON_INIT` calls MinGW's `__main` to run the global constructors. The constructors, and the statics inside libstdc++ (the exception emergency pool and the `error_category` instances), register their destructors with `atexit`. MinGW forwards `atexit` to the CRT's process-wide exit table. The C2 frees the BOF-PE image after `go` returns, so when the host process exits, the CRT calls destructors in freed memory and the process crashes with `0xc0000005`. The POC loader showed this crash in `__do_global_dtors` and `__tcf_emergency_pool`.
+
+`BEACON_INIT` now points the image's `__imp__crt_atexit` import slot at a stub before it calls `__main`, so these registrations never reach the process table. Destructors of statics therefore never run under a C2. The fix has these limits:
+
+* It relies on the `__imp__crt_atexit` slot that MinGW-w64 links into the image. With the msvcrt runtime used by the MinGW build in this repository, that slot is the import of `atexit` from `msvcrt.dll`. With UCRT, it is the `_crt_atexit` import.
+* Registrations made directly with `_onexit` do not go through that slot and are not covered.
+* MSVC and clang-cl builds link the CRT statically with `/MT` and use `__scrt_initialize_crt`. They do not use this path and are not affected.
+
+### Exceptions with MinGW
+
+MinGW `try`/`catch` catches C++ exceptions only. It does not catch access violations or other SEH exceptions. To catch those in an async BOF-PE, build with MSVC or clang-cl and `/EHa`. The sample `CMakeLists.txt` files already set `/EHa` for those compilers.
+
+### Standalone testing
+
+Copy the `.exe` and `beacon.dll` from the same architecture folder to a Windows host and run the `.exe`. In standalone mode, `beacon.dll` emulates the async API:
+
+* `BeaconGetStopJobEvent` returns a manual-reset event that Ctrl+C or Ctrl+Break signals.
+* `BeaconWakeup` prints `[wakeup]`, so you can see when the BOF would wake the implant.
+* `BeaconPrintf` and `BeaconOutput` are serialized, because async BOFs print from worker threads.
+
+Microsoft Defender detects `beacon.dll` as `VirTool:Win64/MeterBof.A` and quarantines it, even with real-time protection turned off. Add a Defender exclusion for the test folder before you copy the files. This affects standalone testing only, because under a C2 the `beacon.dll` imports are resolved to the C2's own API and the file is never loaded.
+
+### Async samples
+
+The `samples/` folder holds two async BOF-PEs. Each has an OC2 script (`.s1.py`) that runs it with `BOFType.ASYNC`.
+
+| Name | Description | Arch |
+| ---- | ----------- | ---- |
+| procwatch | Reports processes that start or exit until the job is stopped. Takes the poll interval in milliseconds, default 2000. | x64, x86 |
+| fake-windows-popup-async | Shows the Windows credential prompt over a dimmed desktop as an async job. Async port of `fake-windows-popup` from [chryzsh/redteam-bofs](https://github.com/chryzsh/redteam-bofs). | x64 |
+
+procwatch was tested on Windows 11 build 26100, standalone and through `loader.exe`. Process start and exit detection, `BeaconWakeup`, stopping with Ctrl+C and Ctrl+Break, and the error path for an unresolved `BeaconGetStopJobEvent` import all work.
+
+```
+procwatch.exe 1000
+loader.exe procwatch.exe i 1000
+```
+
+fake-windows-popup-async was tested in an interactive session on Windows 11, and the credential capture path works. Its policy unit tests run on the build host:
+
+```bash
+cmake -S samples/fake-windows-popup-async/tests -B build-tests
+cmake --build build-tests
+ctest --test-dir build-tests --output-on-failure
+```
+
+Known issue: on the tested Windows 11 build, the credential dialog is hosted by `CredentialUIBroker.exe` in another process. The sample's timeout and the stop job event cannot close that dialog. When the timeout expires or the operator stops the job, the prompt stays on screen until the user acts on it.
+
+### Writing a new async BOF-PE
+
+1. Copy `samples/procwatch/` to a new folder and rename the target in its `CMakeLists.txt`.
+2. Add the folder with `add_subdirectory()` in the root `CMakeLists.txt`, followed by `install_bof_pe(<target>)` and an `install(FILES ...)` line for the `.s1.py` script.
+3. Keep `BEACON_INIT` as the first statement in `go`, and `BEACON_MAIN(fmt, go)` at the end of the file.
+4. Get the stop event through the `volatile` guard, wait on it in the main loop, and return when it is signaled.
 
 ## Thanks
 
