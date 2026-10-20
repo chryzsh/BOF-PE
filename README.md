@@ -200,13 +200,13 @@ Once compilation has finished, all binaries should be present in the dist folder
 
 ```
 dist/
-├── x64/  beacon.dll, loader.exe, tiny-pe.exe, c-pe.exe, cpp-pe.exe, procwatch.exe, fake-windows-popup-async.exe
+├── x64/  beacon.dll, loader.exe, tiny-pe.exe, c-pe.exe, cpp-pe.exe, procwatch.exe
 ├── x86/  beacon.dll, loader.exe, tiny-pe.exe, c-pe.exe, cpp-pe.exe, procwatch.exe
 ├── pe/   <name>.x64.o and <name>.x86.o for each BOF-PE
-└── ost/  procwatch.s1.py, fake-windows-popup-async.s1.py
+└── ost/  procwatch.s1.py
 ```
 
-The files in `pe/` are the same PE as the `.exe` files. OC2 looks up a BOF as `<name>.<arch>.o`, so the install step copies each BOF-PE under that name. The `.s1.py` scripts in `ost/` look for their BOF-PE in `../pe`.
+The files in `pe/` are the same PE as the `.exe` files. OC2 looks up a BOF as `<name>.<arch>.o`, so the install step copies each BOF-PE under that name. The `.s1.py` script in `ost/` looks for its BOF-PE in `../pe`.
 
 ### Prebuilt
 
@@ -324,14 +324,13 @@ Copy the `.exe` and `beacon.dll` from the same architecture folder to a Windows 
 
 Microsoft Defender detects `beacon.dll` as `VirTool:Win64/MeterBof.A` and quarantines it, even with real-time protection turned off. Add a Defender exclusion for the test folder before you copy the files. This affects standalone testing only, because under a C2 the `beacon.dll` imports are resolved to the C2's own API and the file is never loaded.
 
-### Async samples
+### Async sample
 
-The `samples/` folder holds two async BOF-PEs. Each has an OC2 script (`.s1.py`) that runs it with `BOFType.ASYNC`.
+The `samples/` folder holds one async BOF-PE. It has an OC2 script (`.s1.py`) that runs it with `BOFType.ASYNC`.
 
 | Name | Description | Arch |
 | ---- | ----------- | ---- |
 | procwatch | Reports processes that start or exit until the job is stopped. Takes the poll interval in milliseconds, default 2000. | x64, x86 |
-| fake-windows-popup-async | Shows the Windows credential prompt over a dimmed desktop as an async job. Async port of `fake-windows-popup` from [chryzsh/redteam-bofs](https://github.com/chryzsh/redteam-bofs). | x64 |
 
 procwatch was tested on Windows 11 build 26100, standalone and through `loader.exe`. Process start and exit detection, `BeaconWakeup`, stopping with Ctrl+C and Ctrl+Break, and the error path for an unresolved `BeaconGetStopJobEvent` import all work.
 
@@ -339,16 +338,6 @@ procwatch was tested on Windows 11 build 26100, standalone and through `loader.e
 procwatch.exe 1000
 loader.exe procwatch.exe i 1000
 ```
-
-fake-windows-popup-async was tested in an interactive session on Windows 11, and the credential capture path works. Its policy unit tests run on the build host:
-
-```bash
-cmake -S samples/fake-windows-popup-async/tests -B build-tests
-cmake --build build-tests
-ctest --test-dir build-tests --output-on-failure
-```
-
-Known issue: on the tested Windows 11 build, the credential dialog is hosted by `CredentialUIBroker.exe` in another process. The sample's timeout and the stop job event cannot close that dialog. When the timeout expires or the operator stops the job, the prompt stays on screen until the user acts on it.
 
 ### Writing a new async BOF-PE
 
