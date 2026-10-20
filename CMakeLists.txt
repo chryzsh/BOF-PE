@@ -38,3 +38,10 @@ install_bof_pe(cpp-pe)
 add_subdirectory(samples/procwatch)
 install_bof_pe(procwatch)
 install(FILES samples/procwatch/procwatch.s1.py DESTINATION ost)
+
+# fake-windows-popup-async is x64 only
+if(ARCH STREQUAL "x64")
+    add_subdirectory(samples/fake-windows-popup-async)
+    install_bof_pe(fake-windows-popup-async)
+    install(FILES samples/fake-windows-popup-async/fake-windows-popup-async.s1.py DESTINATION ost)
+endif()
