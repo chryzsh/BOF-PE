@@ -208,8 +208,29 @@ BEACON_IMPEX int BeaconInvokeStandalone(int argc, const char* argv[], const char
     #define BEACON_DISCARD __attribute__((section(".discard")))
     #define BEACON_DISCARD_DATA __attribute__((section(".discard_data")))
 
+    /* __main runs the global constructors, and they (and libstdc++'s own
+     * statics) register their destructors with atexit, which MinGW forwards
+     * to the process-wide msvcrt exit table. The C2 frees this image after go
+     * returns, so the host process would call into freed memory when it
+     * exits. Point this image's atexit import at a stub first, so those
+     * registrations stay local. Destructors of statics never run under a C2. */
+    extern void* __MINGW_IMP_SYMBOL(_crt_atexit);
     extern void __main(void);
-    #define BEACON_INIT if(__beacon_init_crt) __main()
+
+    static inline int __cdecl __beacon_atexit(void (__cdecl* func)(void)) {
+        (void)func;
+        return 0;
+    }
+
+    static inline void __beacon_init(void) {
+        DWORD old = 0;
+        if (VirtualProtect(&__MINGW_IMP_SYMBOL(_crt_atexit), sizeof(void*), PAGE_READWRITE, &old)) {
+            __MINGW_IMP_SYMBOL(_crt_atexit) = (void*)__beacon_atexit;
+            VirtualProtect(&__MINGW_IMP_SYMBOL(_crt_atexit), sizeof(void*), old, &old);
+        }
+        __main();
+    }
+    #define BEACON_INIT if(__beacon_init_crt) __beacon_init()
 #else
     #pragma section(".discard_data", read, write)
     //#pragma code_seg(".discard")
