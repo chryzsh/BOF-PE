@@ -2,7 +2,7 @@
 #include <beacon.h>
 #include <string>
 #include <format>
-#include <exception>
+#include <stdexcept>
 #include <chrono>
 
 // The cpp-pe is in my option the best part to come out of the BOF PE design.
@@ -17,7 +17,7 @@
 // std::string, std::chrono and exceptions. If we just make use of std::exception alone, it compiles to 80KB 
 
 void throw_message(const char* message) {
-    throw std::exception(message);
+    throw std::runtime_error(message);
 }
 
 void print_message(const char* arg) {
