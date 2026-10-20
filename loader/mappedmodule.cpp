@@ -474,8 +474,35 @@ MappedModule::MappedModule(Logger logger, const std::vector<std::byte>& peBytes)
     }
 }
 
-MappedModule::~MappedModule() {
- 
+MappedModule::MappedModule(MappedModule&& other) noexcept : _mappedPe(Pe::ImgType::module, nullptr),
+    _mappedImage(other._mappedImage), _loaded(other._loaded), _logger(other._logger) {
+
+    //Take ownership of the mapped image, the moved from object
+    //no longer releases it when destroyed
+    _mappedPe = std::move(other._mappedPe);
+    other._mappedImage = nullptr;
+}
+
+MappedModule& MappedModule::operator=(MappedModule&& other) noexcept {
+
+    if (this != &other) {
+        Release();
+        _mappedPe = std::move(other._mappedPe);
+        _mappedImage = other._mappedImage;
+        _loaded = other._loaded;
+        _logger = other._logger;
+        other._mappedImage = nullptr;
+    }
+
+    return *this;
+}
+
+void MappedModule::Release() {
+
+    //Moved from objects no longer own an image
+    if (_mappedImage == nullptr)
+        return;
+
     if (_mappedPe.headers().nt()->FileHeader.Characteristics & IMAGE_FILE_DLL) {
         auto dllmain = dllmain_ptr(uintptr_t(_mappedPe.base()) + _mappedPe.headers().opt()->AddressOfEntryPoint);
         dllmain(HINSTANCE(_mappedPe.base()), DLL_PROCESS_DETACH, 0);
@@ -483,6 +510,11 @@ MappedModule::~MappedModule() {
 
     RemoveExceptionSupport(_mappedPe);
     VirtualFree(_mappedImage, 0, MEM_RELEASE);
+    _mappedImage = nullptr;
+}
+
+MappedModule::~MappedModule() {
+    Release();
 }
 
 FARPROC MappedModule::GetProcAddress(const char* name) const {
