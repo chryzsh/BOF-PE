@@ -33,3 +33,8 @@ install(TARGETS beacon loader RUNTIME DESTINATION ${ARCH} LIBRARY DESTINATION ${
 install_bof_pe(tiny-pe)
 install_bof_pe(c-pe)
 install_bof_pe(cpp-pe)
+
+# Async BOF-PE samples. ost/ holds their OC2 scripts.
+add_subdirectory(samples/procwatch)
+install_bof_pe(procwatch)
+install(FILES samples/procwatch/procwatch.s1.py DESTINATION ost)
