@@ -77,7 +77,7 @@ int GetPackedArguments(int argc, const char* argv[], const char* bof_args_def, s
 
 int main(int argc, char** argv){
 
-    if(argc < 3){
+    if(argc < 2){
         puts("Not enough arguments to load BOF PE file.\nloader pefile [fmt [arg1] [arg2] ...]");
         return -1;
     }
@@ -87,8 +87,13 @@ int main(int argc, char** argv){
 
         if (pe.GetModule().exports().count() > 0) {
 
-            //Find the first exported function 
-            auto entry = bof_entry_ptr(pe.GetModule().exports().begin()->address());
+            //Prefer the conventional 'go' export, otherwise fall back
+            //to the first exported function
+            auto entry = bof_entry_ptr(pe.GetProcAddress("go"));
+            if (entry == nullptr) {
+                entry = bof_entry_ptr(pe.GetModule().exports().begin()->address());
+                printf("No 'go' export found, using first export\n");
+            }
 
             if (argc - 2 <= 0) {
                 //If we have less than 2 arguments, then no BOF arguments were provided
