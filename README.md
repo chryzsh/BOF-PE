@@ -360,6 +360,14 @@ loader.exe procwatch.dll i 1000
 2. Add the folder with `add_subdirectory()` in the root `CMakeLists.txt`, followed by `install_bof_pe(<target>)` and an `install(FILES ...)` line for the `.s1.py` script.
 3. Keep `BEACON_INIT` as the first statement in `go`, and `BEACON_MAIN(fmt, go)` at the end of the file. Both do nothing in DLL mode, and keeping them lets the same source build in EXE mode.
 4. Get the stop event through the `volatile` guard, wait on it in the main loop, and return when it is signaled.
+5. Keep the `rewrite_response` hook in the `.s1.py` script. OC2 sends async output in chunks, one per implant check-in, and trims newlines at the edges of each chunk, so lines at a chunk boundary run together. The hook puts `"\n\n"` in front of each chunk after the first, the same way OC2's own async BOFs do:
+
+   ```python
+   def rewrite_response(self, response: Optional[str]) -> Optional[str]:
+       if response and self.get_out_name() == "exec_bof_async" and not response.startswith("Task started."):
+           return "\n\n" + response
+       return response
+   ```
 
 ## Developing async BOF-PE with AI
 

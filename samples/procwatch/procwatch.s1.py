@@ -1,6 +1,6 @@
 import os
 
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 from outflank_stage1.task.base_bof_task import BaseBOFTask
 from outflank_stage1.task.enums import BOFType, BOFArgumentEncoding
 from outflank_stage1.task.exceptions import TaskInvalidArgumentsException
@@ -31,3 +31,9 @@ class ProcWatchBOF(BaseBOFTask):
         if parsed.interval <= 0:
             raise TaskInvalidArgumentsException("interval must be a positive number of milliseconds")
         return [(BOFArgumentEncoding.INT, parsed.interval)]
+
+    def rewrite_response(self, response: Optional[str]) -> Optional[str]:
+        # OC2 trims newlines at the edges of each async output chunk, so restore the break between chunks
+        if response and self.get_out_name() == "exec_bof_async" and not response.startswith("Task started."):
+            return "\n\n" + response
+        return response
