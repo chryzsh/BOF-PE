@@ -20,7 +20,7 @@ else()
     # dependency is msvcrt.dll. The default MinGW DLL linker script is used,
     # link.ld is for the EXE model.
     target_compile_options(procwatch PRIVATE -fexceptions)
-    target_link_options(procwatch PRIVATE -fexceptions -static -static-libgcc -static-libstdc++ -s)
+    target_link_options(procwatch PRIVATE -fexceptions -static -static-libgcc -static-libstdc++ -s -Wl,--subsystem,windows)
     if(CMAKE_SIZEOF_VOID_P EQUAL 8)
         target_link_options(procwatch PRIVATE -Wl,--image-base=0x180000000)
     endif()
