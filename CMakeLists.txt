@@ -22,10 +22,12 @@ add_subdirectory(tiny-pe)
 add_subdirectory(c-pe)
 add_subdirectory(cpp-pe)
 
-# Install a BOF-PE twice: <arch>/<name>.exe for standalone runs next to
-# beacon.dll, and pe/<name>.<arch>.o, the name OC2 uses to look up a BOF
+# Install a BOF-PE twice: <arch>/<name>.exe (EXE mode) or <arch>/<name>.dll
+# (DLL mode) for standalone runs next to beacon.dll and loader.exe, and
+# pe/<name>.<arch>.o, the name OC2 uses to look up a BOF. For a DLL target
+# that file is the DLL itself. The import library is not installed.
 function(install_bof_pe target)
-    install(TARGETS ${target} RUNTIME DESTINATION ${ARCH})
+    install(TARGETS ${target} RUNTIME DESTINATION ${ARCH} LIBRARY DESTINATION ${ARCH} ARCHIVE EXCLUDE_FROM_ALL)
     install(FILES $<TARGET_FILE:${target}> DESTINATION pe RENAME ${target}.${ARCH}.o)
 endfunction()
 
