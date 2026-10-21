@@ -7,7 +7,7 @@ After five years of development using this approach, cracks in the design have b
 
 Well, this proposal will hopefully allow just that. In this article, I propose a reference design for a new BOF portable executable (PE) concept that will hopefully solve some of the current constraints and issues faced by BOF developers. Features include:
 
-*	The ability to run the same linked EXE standalone or within a C2 environment
+*	The ability to run the same linked PE (EXE or DLL) standalone or within a C2 environment
 *	Full support for C++ and exceptions are possible
 *	Symbol resolution issues disappear 
 *	Code will be easier to maintain vs the traditional BOF design
@@ -200,13 +200,13 @@ Once compilation has finished, all binaries should be present in the dist folder
 
 ```
 dist/
-├── x64/  beacon.dll, loader.exe, tiny-pe.exe, c-pe.exe, cpp-pe.exe, procwatch.exe
-├── x86/  beacon.dll, loader.exe, tiny-pe.exe, c-pe.exe, cpp-pe.exe, procwatch.exe
+├── x64/  beacon.dll, loader.exe, tiny-pe.exe, c-pe.exe, cpp-pe.exe, procwatch.dll
+├── x86/  beacon.dll, loader.exe, tiny-pe.exe, c-pe.exe, cpp-pe.exe, procwatch.dll
 ├── pe/   <name>.x64.o and <name>.x86.o for each BOF-PE
 └── ost/  procwatch.s1.py
 ```
 
-The files in `pe/` are the same PE as the `.exe` files. OC2 looks up a BOF as `<name>.<arch>.o`, so the install step copies each BOF-PE under that name. The `.s1.py` script in `ost/` looks for its BOF-PE in `../pe`.
+The files in `pe/` are the same PE as the `.exe` or `.dll` files. OC2 looks up a BOF as `<name>.<arch>.o`, so the install step copies each BOF-PE under that name. The `.s1.py` script in `ost/` looks for its BOF-PE in `../pe`.
 
 ### Prebuilt
 
@@ -247,6 +247,20 @@ Hello from Beacon C++ exception handler
 ## Async BOF-PE
 
 An async BOF runs on its own thread inside the implant and keeps running while the implant sleeps. Outflank describes the design in [Async BOFs: Wake Me Up Before You Go Go](https://www.outflank.nl/blog/2025/07/16/async-bofs-wake-me-up-before-you-go-go/). `beacon.h` declares the two functions from that spec, and the standalone `beacon.dll` implements them, so a BOF-PE can also be an async BOF. For AI-assisted development, see [Developing async BOF-PE with AI](#developing-async-bof-pe-with-ai).
+
+### DLL build
+
+Async BOF-PEs are built as DLLs, not EXEs. OC2 runs a BOF-PE as a DLL (the GUI calls it "BOF-PE (.dll)"): a PE32+ DLL that exports `go`, has a DllMain entry point and imports only the Beacon API functions the C2 provides from `beacon.dll`. An EXE built with `BEACON_MAIN` imports `BeaconInvokeStandalone`, which OC2 does not provide. OC2 answers such a job with "Failed to submit Job".
+
+Define `BOF_PE_DLL` for the target and build it with `add_library(<name> SHARED ...)`. In this mode:
+
+* `BEACON_MAIN(fmt, go)` defines no `main` and does not reference `BeaconInvokeStandalone`. The line can stay in the source.
+* `BEACON_INIT` does nothing. The loader calls the DLL entry point with `DLL_PROCESS_ATTACH`. The CRT DLL startup (`DllMainCRTStartup` for MinGW, `_DllMainCRTStartup` for MSVC/clang-cl) initializes the CRT and runs the global constructors.
+* Static destructors go to the DLL's own exit table, which runs on `DLL_PROCESS_DETACH`. They never reach the process exit table, so the MinGW exit crash below does not apply.
+
+EXE mode (no `BOF_PE_DLL`) stays the default, because the upstream samples `tiny-pe`, `c-pe` and `cpp-pe` use it.
+
+With MinGW, a DLL BOF-PE still imports `msvcrt.dll` and has a small TLS directory from the MinGW CRT startup (`tlssup.o`). The BOF-PE has no thread-local variables of its own, and the TLS callbacks only maintain MinGW's per-thread bookkeeping. clang-cl with `/MT` produces a DLL without either.
 
 ### Async API
 
@@ -300,7 +314,9 @@ extern "C" __declspec(dllexport) void go(const char* data, int len) {
 }
 ```
 
-### Static destructors and process exit with MinGW
+### Static destructors and process exit with MinGW (EXE mode)
+
+This section applies to EXE-mode builds only. DLL builds keep static destructors in the DLL's own exit table.
 
 With GCC, `BEACON_INIT` calls MinGW's `__main` to run the global constructors. The constructors, and the statics inside libstdc++ (the exception emergency pool and the `error_category` instances), register their destructors with `atexit`. MinGW forwards `atexit` to the CRT's process-wide exit table. The C2 frees the BOF-PE image after `go` returns, so when the host process exits, the CRT calls destructors in freed memory and the process crashes with `0xc0000005`. The POC loader showed this crash in `__do_global_dtors` and `__tcf_emergency_pool`.
 
@@ -316,7 +332,7 @@ MinGW `try`/`catch` catches C++ exceptions only. It does not catch access violat
 
 ### Standalone testing
 
-Copy the `.exe` and `beacon.dll` from the same architecture folder to a Windows host and run the `.exe`. In standalone mode, `beacon.dll` emulates the async API:
+Copy the BOF-PE DLL, `loader.exe` and `beacon.dll` from the same architecture folder to a Windows host and run the DLL with `loader.exe <name>.dll <fmt> <args>`. `loader.exe` maps the DLL, calls its entry point, then calls `go` with the packed arguments. In standalone mode, `beacon.dll` emulates the async API:
 
 * `BeaconGetStopJobEvent` returns a manual-reset event that Ctrl+C or Ctrl+Break signals.
 * `BeaconWakeup` prints `[wakeup]`, so you can see when the BOF would wake the implant.
@@ -332,18 +348,17 @@ The `samples/` folder holds one async BOF-PE. It has an OC2 script (`.s1.py`) th
 | ---- | ----------- | ---- |
 | procwatch | Reports processes that start or exit until the job is stopped. Takes the poll interval in milliseconds, default 2000. | x64, x86 |
 
-procwatch was tested on Windows 11 build 26100, standalone and through `loader.exe`. Process start and exit detection, `BeaconWakeup`, stopping with Ctrl+C and Ctrl+Break, and the error path for an unresolved `BeaconGetStopJobEvent` import all work.
+procwatch was tested on Windows 11 build 26100 as an EXE, standalone and through `loader.exe`. Process start and exit detection, `BeaconWakeup`, stopping with Ctrl+C and Ctrl+Break, and the error path for an unresolved `BeaconGetStopJobEvent` import all work. The DLL build has not been run on Windows yet.
 
 ```
-procwatch.exe 1000
-loader.exe procwatch.exe i 1000
+loader.exe procwatch.dll i 1000
 ```
 
 ### Writing a new async BOF-PE
 
-1. Copy `samples/procwatch/` to a new folder and rename the target in its `CMakeLists.txt`.
+1. Copy `samples/procwatch/` to a new folder and rename the target in its `CMakeLists.txt`. Keep `add_library(<target> SHARED ...)`, `PREFIX ""` and the `BOF_PE_DLL` definition.
 2. Add the folder with `add_subdirectory()` in the root `CMakeLists.txt`, followed by `install_bof_pe(<target>)` and an `install(FILES ...)` line for the `.s1.py` script.
-3. Keep `BEACON_INIT` as the first statement in `go`, and `BEACON_MAIN(fmt, go)` at the end of the file.
+3. Keep `BEACON_INIT` as the first statement in `go`, and `BEACON_MAIN(fmt, go)` at the end of the file. Both do nothing in DLL mode, and keeping them lets the same source build in EXE mode.
 4. Get the stop event through the `volatile` guard, wait on it in the main loop, and return when it is signaled.
 
 ## Developing async BOF-PE with AI
