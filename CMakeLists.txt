@@ -39,4 +39,4 @@ install_bof_pe(cpp-pe)
 # Async BOF-PE sample. ost/ holds its OC2 script.
 add_subdirectory(samples/procwatch)
 install_bof_pe(procwatch)
-install(FILES samples/procwatch/procwatch.s1.py DESTINATION ost)
+install(FILES samples/procwatch/procwatch_bof.s1.py DESTINATION ost)

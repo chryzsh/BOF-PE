@@ -203,7 +203,7 @@ dist/
 ├── x64/  beacon.dll, loader.exe, tiny-pe.exe, c-pe.exe, cpp-pe.exe, procwatch.dll
 ├── x86/  beacon.dll, loader.exe, tiny-pe.exe, c-pe.exe, cpp-pe.exe, procwatch.dll
 ├── pe/   <name>.x64.o and <name>.x86.o for each BOF-PE
-└── ost/  procwatch.s1.py
+└── ost/  procwatch_bof.s1.py
 ```
 
 The files in `pe/` are the same PE as the `.exe` or `.dll` files. OC2 looks up a BOF as `<name>.<arch>.o`, so the install step copies each BOF-PE under that name. The `.s1.py` script in `ost/` looks for its BOF-PE in `../pe`.
@@ -348,7 +348,7 @@ The `samples/` folder holds one async BOF-PE. It has an OC2 script (`.s1.py`) th
 | ---- | ----------- | ---- |
 | procwatch | Reports processes that start or exit until the job is stopped. Takes the poll interval in milliseconds, default 2000. | x64, x86 |
 
-procwatch was tested on Windows 11 build 26100 as an EXE, standalone and through `loader.exe`. Process start and exit detection, `BeaconWakeup`, stopping with Ctrl+C and Ctrl+Break, and the error path for an unresolved `BeaconGetStopJobEvent` import all work. The DLL build has not been run on Windows yet.
+procwatch was tested on Windows 11 build 26100 as an EXE, standalone and through `loader.exe`. Process start and exit detection, `BeaconWakeup`, stopping with Ctrl+C and Ctrl+Break, and the error path for an unresolved `BeaconGetStopJobEvent` import all work. The x64 DLL build was tested under OC2 on Windows 11 build 26100: `procwatch 1000` reported process starts and exits, and `task stop` ended the job.
 
 ```
 loader.exe procwatch.dll i 1000
@@ -357,7 +357,7 @@ loader.exe procwatch.dll i 1000
 ### Writing a new async BOF-PE
 
 1. Copy `samples/procwatch/` to a new folder and rename the target in its `CMakeLists.txt`. Keep `add_library(<target> SHARED ...)`, `PREFIX ""` and the `BOF_PE_DLL` definition.
-2. Add the folder with `add_subdirectory()` in the root `CMakeLists.txt`, followed by `install_bof_pe(<target>)` and an `install(FILES ...)` line for the `.s1.py` script.
+2. Add the folder with `add_subdirectory()` in the root `CMakeLists.txt`, followed by `install_bof_pe(<target>)` and an `install(FILES ...)` line for the `.s1.py` script. Name the script `<name>_bof.s1.py`. OC2 does not load a script named `<name>.s1.py`, and the command then shows as "Command not found". Run the BOF through the script's command. Plain `exec_bof` runs it sync, and OC2 then reports "BOF-PE unable to resolve function BeaconGetStopJobEvent from beacon.dll".
 3. Keep `BEACON_INIT` as the first statement in `go`, and `BEACON_MAIN(fmt, go)` at the end of the file. Both do nothing in DLL mode, and keeping them lets the same source build in EXE mode.
 4. Get the stop event through the `volatile` guard, wait on it in the main loop, and return when it is signaled.
 5. Keep the `rewrite_response` hook in the `.s1.py` script. OC2 sends async output in chunks, one per implant check-in, and trims newlines at the edges of each chunk, so lines at a chunk boundary run together. The hook puts `"\n\n"` in front of each chunk after the first, the same way OC2's own async BOFs do:
